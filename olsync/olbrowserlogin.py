@@ -9,23 +9,24 @@
 # Version: 1.2.0
 ##################################################
 
+import requests as reqs
 from PySide6.QtCore import QCoreApplication, QUrl
 from PySide6.QtWebEngineCore import (QWebEnginePage, QWebEngineProfile,
                                      QWebEngineSettings)
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QApplication, QMainWindow
 
-from olcesync.comm import *
+# Where to get the CSRF Token and where to send the login request to
+LOGIN_URL = "https://www.overleaf.com/login"
+PROJECT_URL = "https://www.overleaf.com/project"    # The dashboard URL
+SOCKET_URL = "https://www.overleaf.com/socket.io/socket.io.js"
 
-
-def on_cert_error(e):
-    # print(f"cert error: {e.description()}")
-    # print(f"type: {e.type()}")
-    # print(f"overridable: {e.isOverridable()}")
-    # print(f"url: {e.url()}")
-    # for c in e.certificateChain():
-    #     print(c.toText())
-    e.acceptCertificate()
+# JS snippet to get the first link
+JAVASCRIPT_EXTRACT_PROJECT_URL = "document.getElementsByClassName('dash-cell-name')[1].firstChild.href"
+# JS snippet to extract the csrfToken
+JAVASCRIPT_CSRF_EXTRACTOR = "document.getElementsByName('ol-csrfToken')[0].content"
+# Name of the cookies we want to extract
+COOKIE_NAMES = ["overleaf_session2", "GCLB"]
 
 
 class OlBrowserLoginWindow(QMainWindow):
@@ -34,16 +35,14 @@ class OlBrowserLoginWindow(QMainWindow):
     Opens a browser window to securely login the user and returns relevant login data.
     """
 
-    def __init__(self, server_ip, *args, **kwargs):
+    def __init__(self, *args, **kwargs):
         super(OlBrowserLoginWindow, self).__init__(*args, **kwargs)
 
         self.webview = QWebEngineView()
+
         self._cookies = {}
         self._csrf = ""
         self._login_success = False
-
-        self.LOGIN_URL = "https://{}/login".format(server_ip)
-        self.PROJECT_URL = "https://{}/project".format(server_ip)
 
         self.profile = QWebEngineProfile(self.webview)
         self.cookie_store = self.profile.cookieStore()
@@ -55,9 +54,8 @@ class OlBrowserLoginWindow(QMainWindow):
                                              True)
 
         webpage = QWebEnginePage(self.profile, self)
-        webpage.certificateError.connect(on_cert_error)
         self.webview.setPage(webpage)
-        self.webview.load(QUrl.fromUserInput(self.LOGIN_URL))
+        self.webview.load(QUrl.fromUserInput(LOGIN_URL))
         self.webview.loadFinished.connect(self.handle_load_finished)
 
         self.setCentralWidget(self.webview)
@@ -66,7 +64,7 @@ class OlBrowserLoginWindow(QMainWindow):
     def handle_load_finished(self):
 
         def callback(result):
-
+       
             def callback(result):
                 self._csrf = result
                 self._login_success = True
@@ -76,7 +74,7 @@ class OlBrowserLoginWindow(QMainWindow):
             self.webview.loadFinished.connect(lambda x: self.webview.page(
             ).runJavaScript(JAVASCRIPT_CSRF_EXTRACTOR, 0, callback))
 
-        if self.webview.url().toString() == self.PROJECT_URL:
+        if self.webview.url().toString() == PROJECT_URL:
             self.webview.page().runJavaScript(JAVASCRIPT_EXTRACT_PROJECT_URL, 0,
                                               callback)
 
@@ -98,25 +96,29 @@ class OlBrowserLoginWindow(QMainWindow):
         return self._login_success
 
 
-def login(server_ip):
+def login():
     from PySide6.QtCore import QLoggingCategory
-    QLoggingCategory.setFilterRules('''\
-    qt.webenginecontext.info=false
-    ''')
+    QLoggingCategory.setFilterRules('qt.webenginecontext.info=false')
 
     app = QApplication([])
-    ol_browser_login_window = OlBrowserLoginWindow(server_ip)
+    ol_browser_login_window = OlBrowserLoginWindow()
     ol_browser_login_window.show()
     app.exec()
 
     if not ol_browser_login_window.login_success:
         return None
 
-    return {
+    dat = {
         "cookie": ol_browser_login_window.cookies,
         "csrf": ol_browser_login_window.csrf
     }
 
+    # requesting GCLB
+    # r = reqs.get(SOCKET_URL, cookies=dat["cookie"])
+    # dat["cookie"]['GCLB'] = r.cookies['GCLB']    # type: ignore
+
+    return dat
+
 
 if __name__ == '__main__':
-    print(login("202.117.43.87"))
+    login()
